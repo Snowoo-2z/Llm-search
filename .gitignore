@@ -1,0 +1,20 @@
+# Données et artefacts volumineux
+data/
+runs/
+artifacts/
+results/
+checkpoints/
+*.bin
+*.pt
+*.bcpkg
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Divers
+.DS_Store

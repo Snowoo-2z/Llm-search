@@ -1,0 +1,10 @@
+torch>=2.2
+numpy>=1.24
+tokenizers>=0.15
+
+# Optionnel (Colab / évaluation)
+# datasets>=2.18
+# evalplus>=0.3
+# lm-eval>=0.4
+# bitsandbytes>=0.43
+# transformers>=4.44
