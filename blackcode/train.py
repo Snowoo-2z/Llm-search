@@ -189,6 +189,12 @@ def main() -> None:
             print(f"[compile] ignoré : {exc}")
 
     dataset = TokenDataset(args.data, device=device)
+    data_vocab = int(dataset.meta.get("vocab_size", cfg.vocab_size))
+    if data_vocab > cfg.vocab_size:
+        raise ValueError(
+            f"le corpus utilise {data_vocab} jetons mais le modèle n'en a que "
+            f"{cfg.vocab_size} : mettre vocab_size={data_vocab} dans {args.config} "
+            f"(ou relancer `blackcode.data build --sync-config {args.config}`)")
     print(f"[data] train {dataset.train_tokens/1e6:.2f} M tokens | "
           f"val {dataset.val_tokens/1e6:.2f} M tokens")
 
@@ -305,7 +311,8 @@ def main() -> None:
                 f.write(json.dumps(record) + "\n")
             last_log_time, last_log_tokens = now, tokens_seen
 
-        if (step + 1) % args.eval_interval == 0 or step == args.max_steps - 1:
+        if ((args.eval_interval and (step + 1) % args.eval_interval == 0)
+                or step == args.max_steps - 1):
             metrics = estimate_loss(model, dataset, args.batch_size, seq_len,
                                     args.eval_iters, args.logit_chunk)
             print(f"[eval] step {step} | train {metrics['train']:.4f} | val {metrics['val']:.4f}")
@@ -320,7 +327,8 @@ def main() -> None:
                     mirror_threads.append(_async_copy(best_path, mirror_dir / "best.pt"))
             model.train()
 
-        if (step + 1) % args.save_interval == 0 or step == args.max_steps - 1:
+        if ((args.save_interval and (step + 1) % args.save_interval == 0)
+                or step == args.max_steps - 1):
             torch.save({
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),

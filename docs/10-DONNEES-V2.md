@@ -95,13 +95,32 @@ français se dégrade nettement.
 
 ### Mesures faites dans cet environnement
 
+Construction complète de `data/v2` sur 1,2 Go de sources (97 sdists PyPI,
+7 dépôts GitHub, 2 dépôts français) :
+
 | Mesure | Valeur |
 |---|---|
-| Débit du filtre+dédup | ~3,3 Mo/s sur 1 cœur (parallélisable par source) |
+| Volume brut lu | 1,2 Go |
+| Volume retenu après filtres | **661 Mo** (55 %) |
+| Documents | **51 233** |
+| **Tokens train** | **174,3 M** |
+| Tokens validation | 3,54 M (2 %) |
+| Documents avec FIM | 24 529 (48 %) |
+| Exemples agentiques | 1 212 |
+| Longueur médiane d'exemple | 1 657 tokens (p90 8 193) |
+| Répartition | code 39 912 / prose 10 109 / agentique 1 212 |
+| Durée totale | **10 min** sur 2 cœurs (filtre, dédup, tokenizer, tokenisation) |
+
+Le corpus v2 fait donc **2× le v1** (174 M contre 87 M tokens), à volume brut
+comparable : le v1 ne gardait que du Python de 97 paquets, le v2 ajoute les
+dépôts GitHub complets, la documentation et les deux dépôts français.
+
+| Autre mesure | Valeur |
+|---|---|
 | Taux de rejet qualité | ~19 % des fichiers |
-| Taux de doublons | ~13 % (exacts + quasi) |
-| Rendement tokens | ~96 M tokens par Go de code |
-| Fonctions produisant une **vraie** trace d'échec | **6,5 %** (22 / 339 testées) |
+| Taux de doublons | ~13 % (exacts + empreinte + SimHash) |
+| Rendement | ~145 M tokens par Go de sources (vocab 49 152) |
+| Fonctions produisant une **vraie** trace d'échec | **6,5 %** (13 / 200 exécutées) |
 | Exemples agentiques par fonction | 3 (2 rédactions + 1 outil) |
 
 Le taux de 6,5 % paraît faible, mais il est *cumulatif* : sur 40 000 fichiers
@@ -178,10 +197,13 @@ déjà PyPI et GitHub ; ajouter npm est trivial (registre JSON public).
 python -m blackcode.data stats --src data/raw --max-mb 400
 
 # 2. construction complète (tokenizer StarCoder2 + FIM + agentique exécuté)
+#    --sync-config met à jour les configs avec la taille réelle du vocabulaire
 python -m blackcode.data build --src data/raw --out data/v2 \
   --tokenizer hf:bigcode/starcoder2-3b \
   --vocab 49152 --seq-len 8192 --fim-rate 0.5 \
-  --agentic-frac 0.10 --agentic-exec --max-spawns 4000
+  --agentic-frac 0.10 --agentic-exec --max-spawns 2000 \
+  --sync-config configs/blackcode_0.6b.json \
+  --sync-config configs/blackcode_1.2b.json
 
 # 3. vérification
 cat data/v2/meta.json

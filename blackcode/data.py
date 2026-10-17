@@ -798,6 +798,11 @@ def train_tokenizer(docs: list[Doc], vocab: int, out: Path, sample_chars: int = 
           f"({(out/'tokenizer.json').stat().st_size/1024:.0f} Ko)")
 
 
+def load_tokenizer_size(path: Path) -> int:
+    from tokenizers import Tokenizer
+    return Tokenizer.from_file(str(path)).get_vocab_size()
+
+
 def load_external_tokenizer(spec: str, out: Path) -> Path:
     """Copie un tokenizer existant en ajoutant nos jetons spéciaux à la fin.
 
@@ -996,12 +1001,14 @@ def build(args) -> dict:
         target = int(len(docs) * args.agentic_frac)
         spawns = 0
         for doc in py:
-            if len(agentic) >= target or spawns >= args.max_spawns:
+            # `--max-spawns` limite les *exécutions*, pas la génération des
+            # gabarits : sinon un petit budget d'exécution tronque tout le jeu.
+            if len(agentic) >= target:
                 break
             for func in functions_from_source(doc.text):
                 if len(func.body) < 80:
                     continue
-                if args.agentic_exec:
+                if args.agentic_exec and spawns < args.max_spawns:
                     spawns += 1
                     convo = mutated_failure_example(func, rng)
                     if convo:
@@ -1011,9 +1018,9 @@ def build(args) -> dict:
                 if len(agentic) >= target:
                     break
     if agentic:
-        print(f"[data] {len(agentic)} exemples agentiques "
-              f"({sum(1 for d in agentic if 'fails' in d.text[:400] or 'échoue' in d.text[:400])} "
-              f"issus d'une exécution réelle)")
+        executed = sum(1 for d in agentic if "run_tests" in d.text and "FAILED" in d.text)
+        print(f"[data] {len(agentic)} exemples agentiques dont {executed} "
+              f"issus d'une exécution réelle ({spawns} mutants exécutés)")
         docs.extend(agentic)
         rng = random.Random(args.seed)
         rng.shuffle(docs)
@@ -1045,6 +1052,18 @@ def cmd_build(args) -> None:
         load_external_tokenizer(args.tokenizer, out)
     else:
         train_tokenizer(docs, args.vocab, out, sample_chars=args.tokenizer_chars, seed=args.seed)
+    actual_vocab = load_tokenizer_size(out / "tokenizer.json")
+    if actual_vocab > args.vocab:
+        print(f"[tokenizer] ⚠ le tokenizer fait {actual_vocab} jetons, "
+              f"--vocab {args.vocab} : les configs de modèle doivent utiliser "
+              f"vocab_size ≥ {actual_vocab} (voir --sync-config).")
+    if args.sync_config:
+        for cfg_path in args.sync_config:
+            cfg_file = Path(cfg_path)
+            cfg = json.loads(cfg_file.read_text())
+            cfg["vocab_size"] = actual_vocab
+            cfg_file.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+            print(f"[config] {cfg_file} : vocab_size = {actual_vocab}")
     meta = pack(docs, out / "tokenizer.json", out, args.seq_len, args.fim_rate,
                 args.val_frac, args.seed)
     meta["stats"] = result["stats"]
@@ -1094,6 +1113,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exécute réellement les mutants (lent, mais traces vraies)")
     b.add_argument("--max-spawns", type=int, default=2000)
     b.add_argument("--tokenizer-chars", type=int, default=120_000_000)
+    b.add_argument("--sync-config", action="append", default=None,
+                   help="fichier de config à mettre à jour avec le vocabulaire réel "
+                        "(répétable)")
     b.add_argument("--tokenizer", default=None,
                    help="'hf:bigcode/starcoder2-3b' ou chemin tokenizer.json — "
                         "indispensable pour distiller un professeur (identifiants partagés)")
