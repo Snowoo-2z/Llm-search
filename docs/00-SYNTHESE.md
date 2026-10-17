@@ -57,7 +57,9 @@ runtime estimé     180,0 Mo
 total              609,5 Mo   → marge de 414,5 Mo sous 1 Go
 ```
 
-Le runtime réel reste à mesurer. Mesure faite dans ce dépôt : **PyTorch consomme ~500 Mo de RSS avant même de charger le modèle** (537 Mo au total pour un modèle de 2,16 M). Avec PyTorch, un modèle de 1,19 Md (430 Mo de poids + KV) frôlerait donc 1 Go, sans marge. Un moteur C dédié visant 80 Mo ramène le total à ~510 Mo. C'est pourquoi le runtime est un livrable de première classe.
+Avec un runtime C de 80 Mo et **4 096 de contexte**, le total tombe à **461 Mo** (269 + 64 + 48 + 0,2 + 80) : on est sous 0,5 Go. C'est le scénario « 1 Go voire moins ».
+
+Le runtime réel reste à mesurer. Mesure faite dans ce dépôt : **PyTorch consomme ~500 Mo de RSS avant même de charger le modèle** (537 Mo au total pour un modèle de 2,16 M). Avec PyTorch, un modèle de 1,19 Md (430 Mo de poids + KV) frôlerait donc 1 Go, sans marge. Un moteur C dédié visant 80 Mo ramène le total à ~510 Mo à 8k et ~461 Mo à 4k. C'est pourquoi le runtime est un livrable de première classe.
 
 ---
 

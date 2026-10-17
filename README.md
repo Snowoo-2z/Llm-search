@@ -28,6 +28,9 @@ cache KV 8k         96 Mo
 runtime C estimé   180 Mo
 -----------------------------
 total              609 Mo      marge : 415 Mo sous 1 Go
+
+# variante 4k de contexte + runtime C de 80 Mo :
+# 269 + 64 + 48 + 0,2 + 80 = 461 Mo  →  sous 0,5 Go
 ```
 
 ---
