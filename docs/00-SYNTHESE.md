@@ -71,7 +71,7 @@ Le runtime réel reste à mesurer. Mesure faite dans ce dépôt : **PyTorch cons
 - **Phase 3 — capacités** : RLVR sur tests unitaires, REN, décodage par tests, mémoire à clés-produit.
 - **Phase 4 — agent** : harnais outils + évaluation honnête (HumanEval+, MBPP+, LiveCodeBench, RAM, latence).
 
-Le détail est dans `docs/05-FEUILLE-DE-ROUTE.md`. Le protocole T4, avec commandes et temps estimés, est dans `docs/04-PROTOCOLE-T4.md`.
+Le détail est dans `docs/05-FEUILLE-DE-ROUTE.md`. Le protocole T4, avec commandes et temps estimés, est dans `docs/04-PROTOCOLE-T4.md`. Les leviers de réduction du temps d'entraînement (distillation, élagage, Muon, WSD, débit) sont chiffrés dans `docs/07-TEMPS-D-ENTRAINEMENT.md`.
 
 ---
 

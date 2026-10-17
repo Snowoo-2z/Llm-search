@@ -229,7 +229,8 @@ class BlackCode(nn.Module):
         return F.linear(hidden, weight)
 
     def forward_hidden(self, idx, kv_caches=None, start_pos: int = 0,
-                       use_cache: bool = False, checkpoint: bool = False):
+                       use_cache: bool = False, checkpoint=False):
+        """``checkpoint`` : False/"none", "selective" (1 bloc sur 2) ou "full"."""
         b, t = idx.shape
         if start_pos + t > self.cfg.max_seq_len:
             raise ValueError("séquence plus longue que max_seq_len")
@@ -241,7 +242,13 @@ class BlackCode(nn.Module):
         for _ in range(self.cfg.loop):
             for block in self.blocks:
                 cache = kv_caches[slot] if kv_caches is not None else None
-                if checkpoint and self.training:
+                if checkpoint in (True, "full"):
+                    do_checkpoint = True
+                elif checkpoint == "selective":
+                    do_checkpoint = (slot % 2 == 0)  # schéma √L
+                else:
+                    do_checkpoint = False
+                if do_checkpoint and self.training:
                     x, new_cache = torch.utils.checkpoint.checkpoint(
                         block, x, cos, sin, cache, use_cache, use_reentrant=False
                     )
@@ -258,7 +265,7 @@ class BlackCode(nn.Module):
         return self._logits(hidden[:, -1, :]), new_caches
 
     def forward_loss(self, idx, targets, logit_chunk: int = 256,
-                     checkpoint: bool = False):
+                     checkpoint=False):
         """Perte en calculant les logits par morceaux (VRAM quasi constante)."""
         hidden, _ = self.forward_hidden(idx, checkpoint=checkpoint)
         b, t, _ = hidden.shape

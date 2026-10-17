@@ -80,5 +80,28 @@ class TestExport(unittest.TestCase):
             self.assertLess(header["effective_bits_per_param"], 16)
 
 
+class TestPrune(unittest.TestCase):
+    def test_select_band_keeps_middle(self):
+        from blackcode.prune import select_band
+        losses = list(range(100))
+        keep, lo, hi = select_band(losses, 0.1, 0.9)
+        self.assertEqual(len(keep), 80)  # valeurs 10..89
+        self.assertAlmostEqual(lo, 9.9, places=1)
+        self.assertAlmostEqual(hi, 89.1, places=1)
+        self.assertIn(50, keep)
+        self.assertNotIn(0, keep)
+        self.assertNotIn(99, keep)
+
+    def test_select_band_full_range_keeps_all(self):
+        from blackcode.prune import select_band
+        keep, _, _ = select_band([1.0, 2.0, 3.0], 0.0, 1.0)
+        self.assertEqual(len(keep), 3)
+
+    def test_select_band_empty(self):
+        from blackcode.prune import select_band
+        keep, lo, hi = select_band([], 0.0, 1.0)
+        self.assertEqual(len(keep), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

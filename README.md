@@ -58,7 +58,7 @@ python -m blackcode.export --ckpt runs/nano/best.pt --out artifacts/nano.bcpkg -
 python -m blackcode.planner --config configs/blackcode_1b.json --context 8192
 ```
 
-Tests : `python -m unittest discover -s tests -v` (15 tests, dont la parité entre génération incrémentale et forward complet).
+Tests : `python -m unittest discover -s tests -v` (38 tests : parité génération incrémentale / forward complet, quantification, export, budget, optimiseurs, schedules, calculateur de temps).
 
 ---
 
@@ -76,6 +76,9 @@ blackcode/
   train.py         AMP fp16, perte chunkée, checkpoint/resume, gradient checkpointing
   generate.py      génération avec cache
   export.py        format .bcpkg (2 bits + échelles fp16)
+  optim.py         Muon, AdEMAMix, WSD, weighted decay, mémoire d'entraînement
+  timing.py        calculateur FLOPs / heures / MFU / mémoire
+  prune.py         élagage de données par bande de perte
 configs/           nano (2,2 M), t4_small (51 M), t4_base (127 M), blackcode_1b (1,19 Md)
 docs/              recherche, architecture, méthodes, protocole T4, feuille de route
 colab/             notebook prêt à exécuter sur T4
@@ -119,11 +122,34 @@ Le protocole complet (corpus, distillation, RLVR, évaluation, temps estimés) e
 
 ---
 
+## Réduire le temps d'entraînement (sans réduire la taille)
+
+Le temps vaut **tokens nécessaires × temps par token ÷ parallélisme**. Les leviers implémentés :
+
+```bash
+# débit : +20 à 40 % sur T4, et rend 1,2 Md possible en mémoire
+python -m blackcode.train ... --optim adafactor --checkpoint-policy selective     --compile --schedule wsd --mirror-dir /content/drive/MyDrive/blackcode/runs/t4
+
+# efficacité par token : Muon (1,3–2× selon la littérature)
+python -m blackcode.train ... --optim muon --muon-lr 0.02
+
+# moins de tokens : élagage des données par bande de perte
+python -m blackcode.prune --ckpt runs/t4_small/best.pt     --tokenizer data/code/tokenizer.json --src /content/corpus     --out /content/corpus_pruned --lo 0.05 --hi 0.85
+
+# savoir combien de temps et de mémoire il faut, avant de lancer
+python -m blackcode.timing --config configs/blackcode_1b.json     --tokens 1e9 --seq-len 4096 --memory
+```
+
+Sur un T4, **AdamW fp32 ne permet pas d'entraîner 1,2 Md** (19,6 Go de poids + gradients + états pour 16 Go de VRAM). Adafactor (11,5 Go) et AdamW 8-bit (12,8 Go) le rendent possible. Le détail, les mesures CPU et le plan d'action sont dans [`docs/07-TEMPS-D-ENTRAINEMENT.md`](docs/07-TEMPS-D-ENTRAINEMENT.md).
+
+---
+
 ## La recherche
 
 | Document | Contenu |
 |---|---|
 | [`docs/00-SYNTHESE.md`](docs/00-SYNTHESE.md) | les 10 constats et les décisions en une page |
+| [`docs/07-TEMPS-D-ENTRAINEMENT.md`](docs/07-TEMPS-D-ENTRAINEMENT.md) | réduire le temps à taille fixée : leviers, chiffres, plan |
 | [`docs/01-ETAT-DE-L-ART.md`](docs/01-ETAT-DE-L-ART.md) | revue : BitNet, ParetoQ, lois de précision, LFM2, Kimi Linear, MobileLLM, memory layers, TRM, RLVR, SLM agents |
 | [`docs/02-ARCHITECTURE.md`](docs/02-ARCHITECTURE.md) | architecture, budget détaillé, ablations, runtime |
 | [`docs/03-METHODES-NOUVELLES.md`](docs/03-METHODES-NOUVELLES.md) | TAD, UTB, REN, PKM-Code, LDD, MAP, routeur |
