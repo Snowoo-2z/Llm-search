@@ -205,7 +205,13 @@ Optimiser le débit (compile, batch, noyaux) donne un facteur ~1,5. Changer le n
 
 ---
 
-## 8. Références
+## 8. Note : la vitesse d'inférence n'est pas la vitesse d'entraînement
+
+Les 9,2 tok/s du moteur C (`runtime/bcrun`) concernent **l'inférence** d'un 1,19 Md sur 2 cœurs. L'entraînement se fait sur GPU avec PyTorch et des milliers de tokens par pas en parallèle : `t4_small` tourne à ~70 000 tokens/s théoriques sur T4 (22,8 TFLOPS effectifs), soit un facteur ~7 500. Ne pas confondre les deux quand on lit un chiffre de débit.
+
+Pour l'inférence, la limite est la bande passante mémoire : 267 Mo de poids ternaires lus à chaque token. À 9,2 tok/s, cela fait 2,5 Go/s — bien en dessous des 20–40 Go/s d'un CPU moderne. La marge est donc dans les noyaux SIMD et le nombre de cœurs, pas dans la taille du modèle.
+
+## 9. Références
 
 1. Jordan et al., *Muon: An optimizer for hidden layers in neural networks*, 2024 ; *Muon is Scalable for LLM Training*, arXiv:2502.16982, 2025.
 2. Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies*, arXiv:2404.06395, 2024 (WSD).

@@ -313,24 +313,27 @@ static void rmsnorm(float *out, const float *x, const Tensor *w, int n, float ep
 /* y[rows] = scale[r] * sum_c ternaire(r,c) * x[c] */
 static void ternary_matvec(const Tensor *t, const float *x, float *y) {
     const int rows = t->rows, cols = t->cols, pc = t->packed_cols;
+    const int full = cols & ~3;   /* multiple de 4 : pas de branche dans le coeur */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
     for (int r = 0; r < rows; r++) {
         const uint8_t *row = t->data + (size_t)r * pc;
-        float acc = 0.0f;
-        int c = 0;
-        for (int b = 0; b < pc; b++) {
+        /* 4 accumulateurs indépendants : casse la dépendance de chaîne et
+           laisse l'auto-vectorisation faire son travail. */
+        float a0 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+        int c = 0, b = 0;
+        for (; c < full; c += 4, b++) {
             uint8_t byte = row[b];
-            /* 4 codes par octet : 0 -> -1, 1 -> 0, 2 -> +1 */
-            acc += (float)((int)(byte & 3u) - 1) * x[c];
-            if (++c >= cols) break;
-            acc += (float)((int)((byte >> 2) & 3u) - 1) * x[c];
-            if (++c >= cols) break;
-            acc += (float)((int)((byte >> 4) & 3u) - 1) * x[c];
-            if (++c >= cols) break;
-            acc += (float)((int)((byte >> 6) & 3u) - 1) * x[c];
-            if (++c >= cols) break;
+            a0 += (float)((int)(byte & 3u) - 1) * x[c];
+            a1 += (float)((int)((byte >> 2) & 3u) - 1) * x[c + 1];
+            a2 += (float)((int)((byte >> 4) & 3u) - 1) * x[c + 2];
+            a3 += (float)((int)((byte >> 6) & 3u) - 1) * x[c + 3];
+        }
+        float acc = (a0 + a1) + (a2 + a3);
+        for (; c < cols; c++) {
+            int code = (row[c >> 2] >> (2 * (c & 3))) & 3;
+            acc += (float)(code - 1) * x[c];
         }
         float sc = t->scales ? h2f(t->scales[r]) : 1.0f;
         y[r] = acc * sc;

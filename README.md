@@ -41,6 +41,8 @@ total              609 Mo      marge : 415 Mo sous 1 Go
 
 Le runtime seul pèse **1,6 Mo**. PyTorch, lui, consomme ~500 Mo avant de charger quoi que ce soit : avec lui, la promesse « 1 Go » est intenable. Détail et protocole : [`docs/08-RAM-MESUREE.md`](docs/08-RAM-MESUREE.md).
 
+Débit du moteur C pour ce même modèle (2 cœurs, 8k de contexte) : **9,2 tok/s**, après déroulage de la boucle ternaire et `-ffast-math` (contre 2,6 tok/s pour la première version). Le moteur est limité par la bande passante mémoire — 267 Mo de poids lus par token — pas par le calcul flottant.
+
 ---
 
 ## Démarrage rapide (CPU, ~5 minutes)
@@ -96,6 +98,7 @@ runtime/
   timing.py        calculateur FLOPs / heures / MFU / mémoire
   prune.py         élagage de données par bande de perte
 configs/           nano (2,2 M), t4_small (51 M), t4_base (127 M), blackcode_1b (1,19 Md)
+scripts/           fetch_corpus.py, corpus_report.py, make_random_bcpkg.py, measure_rss.sh
 docs/              recherche, architecture, méthodes, protocole T4, feuille de route
 colab/             notebook prêt à exécuter sur T4
 tests/             15 tests unitaires
@@ -167,6 +170,7 @@ Sur un T4, **AdamW fp32 ne permet pas d'entraîner 1,2 Md** (19,6 Go de poids + 
 | [`docs/00-SYNTHESE.md`](docs/00-SYNTHESE.md) | les 10 constats et les décisions en une page |
 | [`docs/07-TEMPS-D-ENTRAINEMENT.md`](docs/07-TEMPS-D-ENTRAINEMENT.md) | réduire le temps à taille fixée : leviers, chiffres, plan |
 | [`docs/08-RAM-MESUREE.md`](docs/08-RAM-MESUREE.md) | la RAM réellement mesurée : 431 Mo à 8k, parité C/PyTorch |
+| [`docs/09-DATASET.md`](docs/09-DATASET.md) | le dataset est-il prêt ? 87 M tokens construits, comment aller à 1 Md |
 | [`docs/01-ETAT-DE-L-ART.md`](docs/01-ETAT-DE-L-ART.md) | revue : BitNet, ParetoQ, lois de précision, LFM2, Kimi Linear, MobileLLM, memory layers, TRM, RLVR, SLM agents |
 | [`docs/02-ARCHITECTURE.md`](docs/02-ARCHITECTURE.md) | architecture, budget détaillé, ablations, runtime |
 | [`docs/03-METHODES-NOUVELLES.md`](docs/03-METHODES-NOUVELLES.md) | TAD, UTB, REN, PKM-Code, LDD, MAP, routeur |

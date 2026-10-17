@@ -19,3 +19,4 @@ __pycache__/
 # Divers
 .DS_Store
 runtime/bcrun
+data/raw/
