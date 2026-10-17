@@ -13,8 +13,8 @@ On ne fait pas un « petit modèle ». On fait un **gros modèle qui coûte peu*
 |---|---|
 | Poids **ternaires** {-1, 0, +1} (2 bits) | 8× moins de mémoire que le fp16 |
 | **Hybride 3 convolutions / 1 attention** | cache KV constant sur 75 % des couches |
-| **Embeddings liés** + vocabulaire 32k | −67 M de paramètres, −64 Mo |
-| **Distillation + QAT** au lieu du from scratch | 10–50× moins de tokens d'entraînement |
+| **Embeddings liés** + vocabulaire 49 152 | −100 M de paramètres, −100 Mo |
+| **Distillation + QAT** au lieu du from scratch | **×390** sur le budget de calcul |
 | **Tests unitaires** à l'inférence | un vérificateur gratuit qui multiplie la capacité |
 | **Runtime C** dédié | tient réellement sous 1 Go (PyTorch, non) |
 
@@ -87,8 +87,9 @@ blackcode/
   quant.py         quantification ternaire, packing 2 bits, int8 par ligne
   memory.py        budget RAM, scan (taille, bits), loi de précision
   planner.py       CLI du planificateur
-  corpus.py        BPE byte-level, déduplication, split, tokenisation uint16
-  data.py          chargement memmap
+  data.py          pipeline v2 : qualité, dédup exacte + SimHash, FIM, agentique exécuté
+  corpus.py        pipeline v1 (BPE maison, split, tokenisation uint16)
+  distill.py       distillation professeur → élève (top-k KL, professeur 4 bits)
   train.py         AMP fp16, perte chunkée, checkpoint/resume, gradient checkpointing
   generate.py      génération avec cache
   export.py        format .bcpkg (2 bits + échelles fp16)
@@ -97,11 +98,13 @@ runtime/
   optim.py         Muon, AdEMAMix, WSD, weighted decay, mémoire d'entraînement
   timing.py        calculateur FLOPs / heures / MFU / mémoire
   prune.py         élagage de données par bande de perte
-configs/           nano (2,2 M), t4_small (51 M), t4_base (127 M), blackcode_1b (1,19 Md)
-scripts/           fetch_corpus.py, corpus_report.py, make_random_bcpkg.py, measure_rss.sh
-docs/              recherche, architecture, méthodes, protocole T4, feuille de route
+configs/           nano (2,2 M), t4_small (51 M), t4_base (127 M),
+                   blackcode_0.6b (589 M), blackcode_1.2b (1,22 Md), blackcode_1b (1,19 Md)
+scripts/           fetch_corpus.py, corpus_report.py, train_plan.py, colab_setup.sh,
+                   make_random_bcpkg.py, measure_rss.sh
+docs/              recherche, architecture, méthodes, protocole T4, données v2, plan d'entraînement
 colab/             notebook prêt à exécuter sur T4
-tests/             15 tests unitaires
+tests/             65 tests unitaires
 ```
 
 ---
@@ -128,6 +131,30 @@ Ce modèle n'est **pas** utile pour coder : c'est un test de bout en bout. Il pr
 ---
 
 ## Sur Colab T4
+
+**Le plan d'entraînement complet, chiffré, est dans [`docs/11-PLAN-ENTRAINEMENT.md`](docs/11-PLAN-ENTRAINEMENT.md).**
+Il répond à une question simple : un T4 ne peut pas pré-entraîner 0,6–1,2 Md
+depuis zéro (26 à 90 jours). La distillation le ramène à **une session de 4 h**.
+
+```bash
+# 1. préparer la session
+bash scripts/colab_setup.sh
+
+# 2. construire le corpus (tokenizer StarCoder2, FIM, agentique exécuté)
+python -m blackcode.data build --src data/raw --out data/v2 \
+  --tokenizer hf:bigcode/starcoder2-3b --seq-len 8192 \
+  --fim-rate 0.5 --agentic-frac 0.10 --agentic-exec
+
+# 3. connaître le budget exact avant de dépenser du GPU
+python scripts/train_plan.py --config configs/blackcode_0.6b.json --stage distill
+
+# 4. distiller (reprise automatique après coupure)
+python -m blackcode.distill --teacher bigcode/starcoder2-3b --load-4bit \
+  --config configs/blackcode_0.6b.json --data data/v2 --out runs/distill_06b \
+  --seq-len 2048 --batch-size 2 --grad-accum 8 --max-steps 916 \
+  --topk 32 --alpha 0.5 --temperature 2.0 --optim adafactor --lr 3e-4 \
+  --schedule wsd --checkpoint-policy selective --resume
+```
 
 Ouvrir `colab/BlackCode_T4.ipynb`. Le notebook :
 
