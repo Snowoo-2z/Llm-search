@@ -28,10 +28,18 @@ cache KV 8k         96 Mo
 runtime C estimé   180 Mo
 -----------------------------
 total              609 Mo      marge : 415 Mo sous 1 Go
-
-# variante 4k de contexte + runtime C de 80 Mo :
-# 269 + 64 + 48 + 0,2 + 80 = 461 Mo  →  sous 0,5 Go
 ```
+
+**Mesuré, pas estimé** (runtime C, `./runtime/bcrun --mem-report`) :
+
+| Contexte | RSS pic | Marge / 1 Go |
+|---:|---:|---:|
+| 2 048 | 356 Mo | 668 Mo |
+| 4 096 | **385 Mo** | 639 Mo |
+| 8 192 | **431 Mo** | 593 Mo |
+| 16 384 | 536 Mo | 488 Mo |
+
+Le runtime seul pèse **1,6 Mo**. PyTorch, lui, consomme ~500 Mo avant de charger quoi que ce soit : avec lui, la promesse « 1 Go » est intenable. Détail et protocole : [`docs/08-RAM-MESUREE.md`](docs/08-RAM-MESUREE.md).
 
 ---
 
@@ -56,6 +64,12 @@ python -m blackcode.generate --ckpt runs/nano/best.pt \
     --tokenizer data/algorithms/tokenizer.json --prompt "def add(a, b):"
 python -m blackcode.export --ckpt runs/nano/best.pt --out artifacts/nano.bcpkg --context 256
 python -m blackcode.planner --config configs/blackcode_1b.json --context 8192
+
+# 4. Mesurer la RAM réelle du modèle cible (sans l'entraîner)
+make -C runtime
+python scripts/make_random_bcpkg.py --config configs/blackcode_1b.json \
+    --out /tmp/rss.bcpkg --context 8192
+./runtime/bcrun --pkg /tmp/rss.bcpkg --ids 1 --max-new 3 --context 8192 --mem-report
 ```
 
 Tests : `python -m unittest discover -s tests -v` (38 tests : parité génération incrémentale / forward complet, quantification, export, budget, optimiseurs, schedules, calculateur de temps).
@@ -76,6 +90,8 @@ blackcode/
   train.py         AMP fp16, perte chunkée, checkpoint/resume, gradient checkpointing
   generate.py      génération avec cache
   export.py        format .bcpkg (2 bits + échelles fp16)
+runtime/
+  bcrun.c          moteur d'inférence C99 (mmap, GEMV ternaire, GQA, mesure RSS)
   optim.py         Muon, AdEMAMix, WSD, weighted decay, mémoire d'entraînement
   timing.py        calculateur FLOPs / heures / MFU / mémoire
   prune.py         élagage de données par bande de perte
@@ -150,6 +166,7 @@ Sur un T4, **AdamW fp32 ne permet pas d'entraîner 1,2 Md** (19,6 Go de poids + 
 |---|---|
 | [`docs/00-SYNTHESE.md`](docs/00-SYNTHESE.md) | les 10 constats et les décisions en une page |
 | [`docs/07-TEMPS-D-ENTRAINEMENT.md`](docs/07-TEMPS-D-ENTRAINEMENT.md) | réduire le temps à taille fixée : leviers, chiffres, plan |
+| [`docs/08-RAM-MESUREE.md`](docs/08-RAM-MESUREE.md) | la RAM réellement mesurée : 431 Mo à 8k, parité C/PyTorch |
 | [`docs/01-ETAT-DE-L-ART.md`](docs/01-ETAT-DE-L-ART.md) | revue : BitNet, ParetoQ, lois de précision, LFM2, Kimi Linear, MobileLLM, memory layers, TRM, RLVR, SLM agents |
 | [`docs/02-ARCHITECTURE.md`](docs/02-ARCHITECTURE.md) | architecture, budget détaillé, ablations, runtime |
 | [`docs/03-METHODES-NOUVELLES.md`](docs/03-METHODES-NOUVELLES.md) | TAD, UTB, REN, PKM-Code, LDD, MAP, routeur |
@@ -169,7 +186,7 @@ Sur un T4, **AdamW fp32 ne permet pas d'entraîner 1,2 Md** (19,6 Go de poids + 
 - **Pas de « Claude dans 1 Go ».** Un 1,2 Md ternaire ne raisonnera pas comme un 100 Md. Il peut être excellent sur des tâches de code courtes et répétitives, augmenté par les tests, la réparation et les outils.
 - **Pas de pré-entraînement 1 Md sur T4.** Le calcul manque d'un facteur ~100. La voie est distillation + ternarisation + RLVR.
 - **Le ternaire natif n'a pas prouvé sa parité à 1,2 Md.** BitNet la montre à partir de ~3 Md. C'est l'hypothèse centrale, et elle peut échouer. Le plan B (export 4 bits, cible 0,8 Md) est documenté.
-- **PyTorch ne tient pas sous 1 Go.** Le budget de 609 Mo suppose un runtime C. Avec Python + PyTorch, compter +300 à 900 Mo. Le moteur d'inférence est un livrable, pas un détail.
+- **PyTorch ne tient pas sous 1 Go** (~500 Mo de runtime avant les poids). Avec le moteur C de ce dépôt, c'est mesuré : **431 Mo à 8k**. En revanche, la vitesse du moteur C reste faible (2,6 tok/s sur 2 cœurs) : c'est un chantier d'optimisation, pas une promesse tenue.
 - **Les benchmarks de code sont contaminés.** Utiliser LiveCodeBench, des tests cachés et une revue manuelle.
 
 ---

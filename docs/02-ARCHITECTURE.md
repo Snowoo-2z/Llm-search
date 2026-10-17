@@ -82,7 +82,7 @@ Les chiffres ci-dessus supposent un **runtime C minimal** (~100–180 Mo). Mesur
 1. le budget « 1 Go » doit être compris comme **poids + KV + runtime C**, pas comme un chiffre PyTorch ;
 2. le moteur d'inférence est un livrable de première classe, pas un détail. Le format `.bcpkg` et le plan de runtime C sont décrits plus bas.
 
-Avec un runtime C de 80 Mo, le total à 8k tombe à ~510 Mo, ce qui laisse de la place pour 16k de contexte ou une mémoire à clés-produit.
+Mesure réelle du moteur C de ce dépôt (`runtime/bcrun.c`) : **431 Mo à 8k**, 385 Mo à 4k, 536 Mo à 16k. Le runtime seul pèse 1,6 Mo ; les 180 Mo de la ligne « runtime » du tableau étaient donc très prudents. Il reste de la place pour 16k de contexte ou une mémoire à clés-produit.
 
 ### 4.2 Comparaison à budget égal
 

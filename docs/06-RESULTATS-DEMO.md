@@ -70,7 +70,7 @@ RSS pic (génération)      : 537,3 Mo  (+37,5)
 Vitesse                   : 143,8 tok/s (CPU, modèle 2,16 M)
 ```
 
-**Le résultat clé n'est pas la taille du modèle, c'est le coût du runtime.** PyTorch consomme ~500 Mo avant même de charger les poids. Un modèle de 1,19 Md (430 Mo de poids + KV) frôlerait donc 1 Go avec PyTorch. Un moteur C dédié à 80 Mo ramène le total à ~510 Mo. C'est la justification du livrable `runtime/` (phase 4).
+**Le résultat clé n'est pas la taille du modèle, c'est le coût du runtime.** PyTorch consomme ~500 Mo avant même de charger les poids. Le moteur C `runtime/bcrun.c` (phase 4, livré) ramène ce coût à **1,6 Mo** : le modèle de 1,19 Md tient alors en **431 Mo à 8k** de contexte. Voir `docs/08-RAM-MESUREE.md`.
 
 ## 5. Tests
 
