@@ -16,7 +16,8 @@ if [[ "$GPU_COUNT" == 1 ]]; then
   # Cache le second T4 pour un vrai baseline mono-GPU.
   export CUDA_VISIBLE_DEVICES="${SINGLE_GPU:-0}"
 fi
-BATCH_SIZE=$((2 / GPU_COUNT))
+BATCH_SIZE=1
+GRAD_ACCUM=$((16 / GPU_COUNT))
 export GPU_COUNT
 
 "$PY" - <<'PY'
@@ -51,12 +52,13 @@ rng.integers(0, 49152, size=128_000, dtype=np.uint16).tofile(root / "data/val.bi
 }))
 PY
 
+# Batch global identique : microbatch 1, accumulation 16 sur un GPU ou 8 sur deux.
 # 20 pas x 32 768 tokens globaux ≈ 655k tokens, quel que soit le GPU_COUNT.
 # Pas d'évaluation ni de miroir. Le checkpoint temporaire et le corpus synthétique
 # seront supprimés si le test passe.
 TRAIN_ARGS=(--teacher bigcode/starcoder2-3b --load-4bit
   --config configs/blackcode_0.6b.json --data "$SMOKE/data"
-  --out "$SMOKE/run" --seq-len 2048 --batch-size "$BATCH_SIZE" --grad-accum 8
+  --out "$SMOKE/run" --seq-len 2048 --batch-size "$BATCH_SIZE" --grad-accum "$GRAD_ACCUM"
   --max-steps 20 --topk 32 --alpha 0.5 --temperature 2.0
   --optim adafactor --lr 3e-4 --schedule wsd
   --checkpoint-policy selective --eval-interval 0 --save-interval 0 --log-interval 1)

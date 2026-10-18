@@ -32,7 +32,12 @@ Ce test télécharge StarCoder2-3B en 4 bits, génère des IDs aléatoires et fa
 
 Le premier résultat partagé sur **2 T4** est de `1304.9 tokens/s` globaux, soit environ **6,39 h** pour 30 M de tokens. C'est une mesure préliminaire à partir de tokens aléatoires, pas encore la durée réelle du run.
 
-Pour savoir si DDP accélère réellement par rapport à une seule carte, le même script sait faire un baseline mono-T4 avec le même batch effectif :
+Le premier essai mono-T4 avec `batch_size=2` a dépassé les 15,6 Go disponibles. Le script a été corrigé pour tester la même charge avec un microbatch plus petit :
+
+- 1 T4 : `batch-size 1 × grad-accum 16`
+- 2 T4 : `batch-size 1 × grad-accum 8` sur chaque GPU
+
+Dans les deux cas, batch global = 16 séquences et 32 768 tokens par mise à jour. Pour savoir si DDP accélère réellement, relancer le baseline mono-T4 corrigé :
 
 ```bash
 GPU_COUNT=1 LOG=/kaggle/working/blackcode_t4_single.log \\
