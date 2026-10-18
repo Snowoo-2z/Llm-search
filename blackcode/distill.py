@@ -30,6 +30,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
+import shutil
+import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -156,6 +159,43 @@ def kd_loss(student_logits: torch.Tensor, t_values: torch.Tensor,
     return kl.sum(-1).mean()
 
 
+class CheckpointMirror:
+    """Envoie les derniers checkpoints vers Drive sans écrire dessus en cours de save."""
+
+    def __init__(self, directory: str | Path):
+        self.directory = Path(directory)
+        self.tasks: queue.Queue = queue.Queue()
+        self.worker = threading.Thread(target=self._run, daemon=True)
+        self.worker.start()
+
+    def submit(self, source: Path, name: str) -> None:
+        self.tasks.put((Path(source), name))
+
+    def _run(self) -> None:
+        while True:
+            task = self.tasks.get()
+            try:
+                if task is None:
+                    return
+                source, name = task
+                self.directory.mkdir(parents=True, exist_ok=True)
+                target = self.directory / name
+                temp = target.with_suffix(target.suffix + ".uploading")
+                shutil.copyfile(source, temp)
+                temp.replace(target)
+                print(f"[backup] {target} ({target.stat().st_size/1e9:.2f} Go)")
+            except Exception as exc:  # Drive peut se déconnecter pendant une session
+                print(f"[backup] ÉCHEC — copie locale conservée : {exc}")
+            finally:
+                self.tasks.task_done()
+
+    def close(self) -> None:
+        self.tasks.join()
+        self.tasks.put(None)
+        self.tasks.join()
+        self.worker.join()
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Distillation BlackCode")
     p.add_argument("--teacher", required=True,
@@ -196,6 +236,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--save-interval", type=int, default=250)
     p.add_argument("--log-interval", type=int, default=10)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--mirror-dir", default=None,
+                   help="dossier Drive pour la copie des checkpoints (ckpt.pt + best.pt)")
     p.add_argument("--seed", type=int, default=1337)
     return p.parse_args()
 
@@ -269,6 +311,7 @@ def main() -> None:
     tokens_per_step = args.batch_size * args.grad_accum * seq_len
     print(f"[budget] {args.max_steps} étapes × {tokens_per_step} tokens "
           f"= {args.max_steps * tokens_per_step/1e6:.2f} M tokens vus")
+    mirror = CheckpointMirror(args.mirror_dir) if args.mirror_dir else None
     t0 = time.time()
 
     base_lrs = [group["lr"] for group in optimizer.param_groups]
@@ -332,15 +375,25 @@ def main() -> None:
             print(json.dumps({"step": step, "val_ce": val}))
             if val < best_val:
                 best_val = val
-                save(student, optimizer, scaler, step, best_val, out_dir / "best.pt",
-                     args.checkpoint_policy, cfg)
+                best_path = out_dir / "best.pt"
+                save(student, optimizer, scaler, step, best_val, best_path,
+                     args.checkpoint_policy, cfg, include_optimizer=False)
+                if mirror:
+                    mirror.submit(best_path, "best.pt")
 
         if args.save_interval and step > 0 and step % args.save_interval == 0:
             save(student, optimizer, scaler, step, best_val, ckpt_path,
                  args.checkpoint_policy, cfg)
+            if mirror:
+                mirror.submit(ckpt_path, "ckpt.pt")
 
     save(student, optimizer, scaler, args.max_steps - 1, best_val, ckpt_path,
          "full", cfg)
+    if mirror:
+        mirror.submit(ckpt_path, "ckpt.pt")
+        if (out_dir / "best.pt").exists():
+            mirror.submit(out_dir / "best.pt", "best.pt")
+        mirror.close()
     teacher.close()
     print(f"[fin] {args.out} — meilleur val CE {best_val:.4f}")
 
@@ -360,12 +413,16 @@ def evaluate(student, dataset, args, seq_len, device, autocast) -> float:
     return sum(losses) / max(1, len(losses))
 
 
-def save(model, optimizer, scaler, step, best_val, path, policy, cfg) -> None:
+def save(model, optimizer, scaler, step, best_val, path, policy, cfg,
+         include_optimizer: bool = True) -> None:
     state = model.state_dict()
-    torch.save({"model": state, "optimizer": optimizer.state_dict(),
-                "scaler": scaler.state_dict() if scaler.is_enabled() else None,
+    temp = path.with_suffix(path.suffix + ".tmp")
+    torch.save({"model": state,
+                "optimizer": optimizer.state_dict() if include_optimizer else None,
+                "scaler": scaler.state_dict() if include_optimizer and scaler.is_enabled() else None,
                 "step": step, "best_val": best_val, "config": cfg.to_dict()},
-               path)
+               temp)
+    temp.replace(path)
     print(f"[save] {path} (étape {step})")
 
 

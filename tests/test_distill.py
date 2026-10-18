@@ -83,11 +83,17 @@ class DistillEndToEndTests(unittest.TestCase):
                    "--out", str(tmp / "run"), "--seq-len", "32",
                    "--batch-size", "2", "--grad-accum", "1", "--max-steps", "2",
                    "--optim", "adafactor", "--lr", "1e-3", "--logit-chunk", "16",
-                   "--eval-interval", "0", "--save-interval", "0",
-                   "--checkpoint-policy", "none", "--log-interval", "1"]
+                   "--eval-interval", "0", "--save-interval", "1",
+                   "--checkpoint-policy", "none", "--log-interval", "1",
+                   "--mirror-dir", str(tmp / "drive_backup") ]
             proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=300)
             self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
             self.assertTrue((tmp / "run" / "ckpt.pt").exists())
+            self.assertTrue((tmp / "drive_backup" / "ckpt.pt").exists())
+            backup = torch.load(tmp / "drive_backup" / "ckpt.pt", map_location="cpu",
+                                weights_only=False)
+            self.assertEqual(backup["step"], 1)
+            self.assertFalse(list((tmp / "drive_backup").glob("*.uploading")))
             log = (tmp / "run" / "distill_log.jsonl").read_text().strip().splitlines()
             self.assertGreaterEqual(len(log), 1)
             first = json.loads(log[0])

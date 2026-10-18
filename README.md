@@ -132,7 +132,7 @@ Ce modèle n'est **pas** utile pour coder : c'est un test de bout en bout. Il pr
 
 ## Sur Colab T4
 
-**Le plan d'entraînement complet, chiffré, est dans [`docs/11-PLAN-ENTRAINEMENT.md`](docs/11-PLAN-ENTRAINEMENT.md).**
+**Le plan d'entraînement complet, chiffré, est dans [`docs/11-PLAN-ENTRAINEMENT.md`](docs/11-PLAN-ENTRAINEMENT.md).** Pour le stockage gratuit sur Drive, la reprise après interruption ou depuis un second compte Colab, suivre le guide [`docs/12-STOCKAGE-SAUVEGARDES.md`](docs/12-STOCKAGE-SAUVEGARDES.md).
 Il répond à une question simple : un T4 ne peut pas pré-entraîner 0,6–1,2 Md
 depuis zéro (26 à 90 jours). La distillation le ramène à **une session de 4 h**.
 
