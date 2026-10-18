@@ -21,7 +21,18 @@ SUCCÈS : DDP + sauvegarde vérifiés sur les 2 GPU
 
 Si le test échoue, **ne pas démarrer l'entraînement réel** : envoyer les dernières lignes de sortie pour corriger le problème.
 
-## Étape 2 — comparer réellement les performances
+## Étape 2 — mesurer l'élève 0.6B + professeur 3B (sans corpus réel)
+
+Ce test télécharge StarCoder2-3B en 4 bits, génère des IDs aléatoires et fait 20 pas avec le vrai modèle élève. **Il ne produit pas un modèle utile** : son but est seulement de vérifier la mémoire et le débit sur les deux cartes. Le journal reste dans `/kaggle/working` ; les fichiers temporaires et le checkpoint de test sont supprimés si le test réussit.
+
+```bash
+!pip install -q transformers accelerate bitsandbytes
+!bash scripts/kaggle_distill_benchmark.sh
+```
+
+Envoie la ligne `DÉBIT À RETENIR` et tout message d'erreur. Le script estime ensuite la durée théorique pour 30 M de tokens ; on la remplacera par le débit mesuré sur le corpus réel.
+
+## Étape 3 — comparer réellement les performances
 
 L'entraînement sur deux GPU réplique le professeur et l'élève sur chaque carte, calcule des exemples différents, puis synchronise les gradients. Ce n'est pas garanti deux fois plus rapide : le temps de calcul du professeur, les communications entre cartes et l'environnement Kaggle influencent le résultat.
 
