@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import shutil
 import threading
@@ -39,7 +40,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.distributed as dist
+import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel
 
 from .config import ModelConfig
 from .data import TokenDataset
@@ -102,7 +106,8 @@ class HFTeacher(Teacher):
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             )
-            kwargs["device_map"] = {"": 0}
+            device_index = torch.device(device).index or 0
+            kwargs["device_map"] = {"": device_index}
         else:
             kwargs["torch_dtype"] = dtype
         self.model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
@@ -159,6 +164,39 @@ def kd_loss(student_logits: torch.Tensor, t_values: torch.Tensor,
     return kl.sum(-1).mean()
 
 
+class DistillObjective(nn.Module):
+    """Forward wrapper so DDP can synchronize BlackCode's custom forward path."""
+
+    def __init__(self, student: BlackCode, args: argparse.Namespace, policy: str):
+        super().__init__()
+        self.student = student
+        self.alpha = args.alpha
+        self.temperature = args.temperature
+        self.logit_chunk = args.logit_chunk
+        self.policy = policy
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor,
+                teacher_values: torch.Tensor,
+                teacher_indices: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        hidden, _ = self.student.forward_hidden(x, checkpoint=self.policy)
+        ce_total, kd_total, n_pos = 0.0, 0.0, 0
+        for i in range(0, hidden.shape[1], self.logit_chunk):
+            j = min(i + self.logit_chunk, hidden.shape[1])
+            logits = self.student._logits(hidden[:, i:j]).float()
+            n_here = x.shape[0] * (j - i)
+            ce_total = ce_total + F.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]), y[:, i:j].reshape(-1),
+                reduction="sum")
+            kd_total = kd_total + kd_loss(
+                logits, teacher_values[:, i:j], teacher_indices[:, i:j],
+                self.temperature) * n_here
+            n_pos += n_here
+        ce = ce_total / n_pos
+        kd = kd_total / n_pos
+        loss = (1 - self.alpha) * ce + self.alpha * kd
+        return loss, ce.detach(), kd.detach()
+
+
 class CheckpointMirror:
     """Envoie les derniers checkpoints vers Drive sans écrire dessus en cours de save."""
 
@@ -209,8 +247,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--init-from", default=None,
                    help="checkpoint élève de départ (sinon initialisation aléatoire)")
     p.add_argument("--device", default="auto")
+    p.add_argument("--local-rank", "--local_rank", type=int, default=None,
+                   help=argparse.SUPPRESS)
     p.add_argument("--dtype", default="auto")
-    p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--batch-size", type=int, default=2,
+                   help="batch par GPU ; avec torchrun, choisir 1 pour garder le batch global du T4")
     p.add_argument("--grad-accum", type=int, default=8)
     p.add_argument("--seq-len", type=int, default=None)
     p.add_argument("--max-steps", type=int, default=4000)
@@ -244,11 +285,27 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", args.local_rank or 0))
+    distributed = world_size > 1
+    is_main = rank == 0
+    if distributed:
+        if not torch.cuda.is_available():
+            raise RuntimeError("torchrun multi-GPU exige CUDA")
+        if torch.cuda.device_count() < world_size:
+            raise RuntimeError(f"torchrun demande {world_size} GPU, "
+                               f"mais seulement {torch.cuda.device_count()} visibles")
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+        device = f"cuda:{local_rank}"
+    else:
+        device = ("cuda" if torch.cuda.is_available() else "cpu") \
+            if args.device == "auto" else args.device
+    # Initialisation identique sur tous les rangs; DDP diffuse aussi le rang 0.
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    device = ("cuda" if torch.cuda.is_available() else "cpu") \
-        if args.device == "auto" else args.device
     if args.dtype == "auto":
         dtype = "float16" if device.startswith("cuda") else "float32"
     else:
@@ -263,26 +320,44 @@ def main() -> None:
     if args.init_from and Path(args.init_from).exists():
         ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
         student.load_state_dict(ckpt["model"])
-        print(f"[student] initialisé depuis {args.init_from}")
+        if is_main:
+            print(f"[student] initialisé depuis {args.init_from}")
+
+    objective: nn.Module = DistillObjective(student, args, args.checkpoint_policy).to(device)
+    if distributed:
+        objective = DistributedDataParallel(
+            objective, device_ids=[local_rank], output_device=local_rank,
+            broadcast_buffers=False, find_unused_parameters=False,
+        )
+    # Rangs différents doivent échantillonner des exemples différents.
+    torch.manual_seed(args.seed + rank)
+    np.random.seed(args.seed + rank)
 
     teacher_dtypes = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
     teacher = make_teacher(args.teacher, device, args.load_4bit,
                            teacher_dtypes[args.teacher_dtype])
     policy = args.checkpoint_policy
 
-    if teacher.vocab_size != cfg.vocab_size:
+    if teacher.vocab_size != cfg.vocab_size and is_main:
         print(f"[attention] vocab professeur {teacher.vocab_size} ≠ élève {cfg.vocab_size} : "
               f"seuls les {min(teacher.vocab_size, cfg.vocab_size)} premiers "
               f"identifiants sont comparés. Ils doivent être identiques !")
 
     out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
-    (out_dir / "args.json").write_text(json.dumps(vars(args), indent=2) + "\n")
+    if is_main:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
+        (out_dir / "args.json").write_text(json.dumps(vars(args), indent=2) + "\n")
+    if distributed:
+        dist.barrier()
 
     dataset = TokenDataset(args.data, device=device)
-    print(f"[data] train {dataset.train_tokens/1e6:.2f} M | val {dataset.val_tokens/1e6:.2f} M "
-          f"| seq_len {seq_len}")
+    if is_main:
+        print(f"[data] train {dataset.train_tokens/1e6:.2f} M | val {dataset.val_tokens/1e6:.2f} M "
+              f"| seq_len {seq_len}")
+        if distributed:
+            print(f"[ddp] {world_size} GPU | batch local {args.batch_size} | "
+                  f"batch global effectif {args.batch_size * world_size * args.grad_accum}")
 
     optimizer, _ = make_optimizer(
         student, name=args.optim, lr=args.lr, muon_lr=args.muon_lr,
@@ -301,17 +376,21 @@ def main() -> None:
         try:
             optimizer.load_state_dict(ckpt["optimizer"])
         except (KeyError, ValueError):
-            print("[resume] optimiseur réinitialisé")
+            if is_main:
+                print("[resume] optimiseur réinitialisé")
         start_step = ckpt["step"] + 1
         best_val = ckpt.get("best_val", best_val)
-        print(f"[resume] étape {start_step}")
+        if is_main:
+            old_world = ckpt.get("world_size", 1)
+            print(f"[resume] étape {start_step} (ancien world_size={old_world}, nouveau={world_size})")
 
     warmup = args.warmup if args.warmup is not None else max(20, int(0.03 * args.max_steps))
     log_path = out_dir / "distill_log.jsonl"
-    tokens_per_step = args.batch_size * args.grad_accum * seq_len
-    print(f"[budget] {args.max_steps} étapes × {tokens_per_step} tokens "
-          f"= {args.max_steps * tokens_per_step/1e6:.2f} M tokens vus")
-    mirror = CheckpointMirror(args.mirror_dir) if args.mirror_dir else None
+    tokens_per_step = args.batch_size * args.grad_accum * seq_len * world_size
+    if is_main:
+        print(f"[budget] {args.max_steps} étapes × {tokens_per_step} tokens "
+              f"= {args.max_steps * tokens_per_step/1e6:.2f} M tokens vus")
+    mirror = CheckpointMirror(args.mirror_dir) if args.mirror_dir and is_main else None
     t0 = time.time()
 
     base_lrs = [group["lr"] for group in optimizer.param_groups]
@@ -324,38 +403,27 @@ def main() -> None:
             group["lr"] = base * lr_mult
 
         optimizer.zero_grad(set_to_none=True)
-        stats = {"ce": 0.0, "kd": 0.0, "tok": 0.0}
-        for _ in range(args.grad_accum):
+        stats = {"ce": 0.0, "kd": 0.0}
+        for micro_step in range(args.grad_accum):
             x, y = dataset.get_batch("train", args.batch_size, seq_len)
-            with autocast:
-                with torch.no_grad():
-                    t_val, t_idx = teacher_targets(teacher, x, args.topk)
-                hidden, _ = student.forward_hidden(x, checkpoint=policy)
-                ce_total, kd_total, n_pos = 0.0, 0.0, 0
-                for i in range(0, hidden.shape[1], args.logit_chunk):
-                    j = min(i + args.logit_chunk, hidden.shape[1])
-                    logits = student._logits(hidden[:, i:j]).float()
-                    n_here = x.shape[0] * (j - i)
-                    ce_total = ce_total + F.cross_entropy(
-                        logits.reshape(-1, logits.shape[-1]), y[:, i:j].reshape(-1),
-                        reduction="sum")
-                    kd_total = kd_total + kd_loss(
-                        logits, t_val[:, i:j], t_idx[:, i:j],
-                        args.temperature) * n_here
-                    n_pos += n_here
-                ce = ce_total / n_pos
-                kd = kd_total / n_pos
-                loss = ((1 - args.alpha) * ce + args.alpha * kd) / args.grad_accum
-            scaler.scale(loss).backward()
-            stats["ce"] += float(ce.detach())
-            stats["kd"] += float(kd.detach())
-            stats["tok"] += float(n_pos)
+            with torch.no_grad():
+                t_val, t_idx = teacher_targets(teacher, x, args.topk)
+            sync_context = (objective.no_sync()
+                           if distributed and micro_step < args.grad_accum - 1
+                           else nullcontext())
+            with sync_context:
+                with autocast:
+                    loss, ce, kd = objective(x, y, t_val, t_idx)
+                    loss = loss / args.grad_accum
+                scaler.scale(loss).backward()
+            stats["ce"] += float(ce)
+            stats["kd"] += float(kd)
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(student.parameters(), args.grad_clip)
         scaler.step(optimizer)
         scaler.update()
 
-        if step % args.log_interval == 0:
+        if is_main and step % args.log_interval == 0:
             elapsed = time.time() - t0
             done = (step - start_step + 1) * tokens_per_step
             record = {
@@ -370,32 +438,45 @@ def main() -> None:
             with log_path.open("a") as f:
                 f.write(json.dumps(record) + "\n")
 
-        if args.eval_interval and step > 0 and step % args.eval_interval == 0:
+        eval_now = bool(args.eval_interval and step > 0 and step % args.eval_interval == 0)
+        save_now = bool(args.save_interval and step > 0 and step % args.save_interval == 0)
+        if eval_now and is_main:
             val = evaluate(student, dataset, args, seq_len, device, autocast)
             print(json.dumps({"step": step, "val_ce": val}))
             if val < best_val:
                 best_val = val
                 best_path = out_dir / "best.pt"
                 save(student, optimizer, scaler, step, best_val, best_path,
-                     args.checkpoint_policy, cfg, include_optimizer=False)
+                     args.checkpoint_policy, cfg, include_optimizer=False,
+                     world_size=world_size)
                 if mirror:
                     mirror.submit(best_path, "best.pt")
 
-        if args.save_interval and step > 0 and step % args.save_interval == 0:
+        if save_now and is_main:
             save(student, optimizer, scaler, step, best_val, ckpt_path,
-                 args.checkpoint_policy, cfg)
+                 args.checkpoint_policy, cfg, world_size=world_size)
             if mirror:
                 mirror.submit(ckpt_path, "ckpt.pt")
+        if distributed and (eval_now or save_now):
+            dist.barrier()
 
-    save(student, optimizer, scaler, args.max_steps - 1, best_val, ckpt_path,
-         "full", cfg)
+    if is_main:
+        save(student, optimizer, scaler, args.max_steps - 1, best_val, ckpt_path,
+             "full", cfg, world_size=world_size)
+        if mirror:
+            mirror.submit(ckpt_path, "ckpt.pt")
+            if (out_dir / "best.pt").exists():
+                mirror.submit(out_dir / "best.pt", "best.pt")
+    if distributed:
+        dist.barrier()
     if mirror:
-        mirror.submit(ckpt_path, "ckpt.pt")
-        if (out_dir / "best.pt").exists():
-            mirror.submit(out_dir / "best.pt", "best.pt")
         mirror.close()
     teacher.close()
-    print(f"[fin] {args.out} — meilleur val CE {best_val:.4f}")
+    if is_main:
+        print(f"[fin] {args.out} — meilleur val CE {best_val:.4f}")
+    if distributed:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 def evaluate(student, dataset, args, seq_len, device, autocast) -> float:
@@ -414,13 +495,14 @@ def evaluate(student, dataset, args, seq_len, device, autocast) -> float:
 
 
 def save(model, optimizer, scaler, step, best_val, path, policy, cfg,
-         include_optimizer: bool = True) -> None:
+         include_optimizer: bool = True, world_size: int = 1) -> None:
     state = model.state_dict()
     temp = path.with_suffix(path.suffix + ".tmp")
     torch.save({"model": state,
                 "optimizer": optimizer.state_dict() if include_optimizer else None,
                 "scaler": scaler.state_dict() if include_optimizer and scaler.is_enabled() else None,
-                "step": step, "best_val": best_val, "config": cfg.to_dict()},
+                "step": step, "best_val": best_val, "config": cfg.to_dict(),
+                "world_size": world_size},
                temp)
     temp.replace(path)
     print(f"[save] {path} (étape {step})")

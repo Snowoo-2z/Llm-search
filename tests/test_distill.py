@@ -7,12 +7,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 
 from blackcode.config import ModelConfig
-from blackcode.distill import LocalTeacher, kd_loss, teacher_targets
+from blackcode.distill import DistillObjective, LocalTeacher, kd_loss, teacher_targets
 from blackcode.model import build_model
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +63,22 @@ class DistillUnitTests(unittest.TestCase):
         student = torch.randn(2, 5, 32)
         top = teacher.topk(4, dim=-1)
         self.assertGreater(float(kd_loss(student, top.values, top.indices, 1.0)), 0.0)
+
+    def test_distill_objective_forward_and_backward(self):
+        cfg = tiny_cfg()
+        student = build_model(cfg, "cpu")
+        objective = DistillObjective(
+            student, SimpleNamespace(alpha=0.5, temperature=2.0, logit_chunk=8), "none")
+        x = torch.randint(0, cfg.vocab_size, (2, 16))
+        y = torch.randint(0, cfg.vocab_size, (2, 16))
+        with torch.no_grad():
+            hidden, _ = student.forward_hidden(x)
+            top = student._logits(hidden).topk(8, dim=-1)
+        loss, ce, kd = objective(x, y, top.values.cpu(), top.indices.cpu())
+        loss.backward()
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreater(float(ce), 0.0)
+        self.assertTrue(any(p.grad is not None for p in student.parameters()))
 
 
 class DistillEndToEndTests(unittest.TestCase):
