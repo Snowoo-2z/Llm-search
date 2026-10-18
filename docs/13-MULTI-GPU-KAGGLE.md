@@ -30,7 +30,16 @@ Ce test télécharge StarCoder2-3B en 4 bits, génère des IDs aléatoires et fa
 !bash scripts/kaggle_distill_benchmark.sh
 ```
 
-Envoie la ligne `DÉBIT À RETENIR` et tout message d'erreur. Le script estime ensuite la durée théorique pour 30 M de tokens ; on la remplacera par le débit mesuré sur le corpus réel.
+Le premier résultat partagé sur **2 T4** est de `1304.9 tokens/s` globaux, soit environ **6,39 h** pour 30 M de tokens. C'est une mesure préliminaire à partir de tokens aléatoires, pas encore la durée réelle du run.
+
+Pour savoir si DDP accélère réellement par rapport à une seule carte, le même script sait faire un baseline mono-T4 avec le même batch effectif :
+
+```bash
+GPU_COUNT=1 LOG=/kaggle/working/blackcode_t4_single.log \\
+  bash scripts/kaggle_distill_benchmark.sh
+```
+
+La valeur par défaut reste `GPU_COUNT=2`. Envoie la ligne `DÉBIT À RETENIR` du test mono-T4 et toute erreur. Le script estime ensuite la durée théorique pour 30 M de tokens ; on la remplacera par le débit mesuré sur le corpus réel.
 
 ## Étape 3 — comparer réellement les performances
 
