@@ -71,13 +71,24 @@ class TernaryLinear(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, d_model: int, hidden: int, ternary: bool):
+    def __init__(self, d_model: int, hidden: int, ternary: bool, fused: bool = True):
         super().__init__()
-        self.w1 = TernaryLinear(d_model, hidden, ternary)
-        self.w3 = TernaryLinear(d_model, hidden, ternary)
-        self.w2 = TernaryLinear(hidden, d_model, ternary)
+        self.fused = fused
+        if fused:
+            # Fused : un seul linear 2*hidden au lieu de 2× hidden → -1 kernel launch, +5-10% FFN
+            self.w13 = TernaryLinear(d_model, 2 * hidden, ternary)
+            self.w2 = TernaryLinear(hidden, d_model, ternary)
+        else:
+            self.w1 = TernaryLinear(d_model, hidden, ternary)
+            self.w3 = TernaryLinear(d_model, hidden, ternary)
+            self.w2 = TernaryLinear(hidden, d_model, ternary)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.fused:
+            # w13(x) -> [gate, up] en une fois
+            gate_up = self.w13(x)
+            gate, up = gate_up.chunk(2, dim=-1)
+            return self.w2(F.silu(gate) * up)
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
@@ -188,7 +199,7 @@ class AttentionBlock(nn.Module):
         self.attn_norm = RMSNorm(cfg.d_model, cfg.norm_eps)
         self.attn = Attention(cfg)
         self.ffn_norm = RMSNorm(cfg.d_model, cfg.norm_eps)
-        self.ffn = SwiGLU(cfg.d_model, cfg.ffn_hidden, cfg.ternary)
+        self.ffn = SwiGLU(cfg.d_model, cfg.ffn_hidden, cfg.ternary, fused=True)
 
     def forward(self, x, cos, sin, cache=None, use_cache=False):
         y, new_cache = self.attn(self.attn_norm(x), cos, sin, cache, use_cache)
@@ -213,7 +224,7 @@ class ConvBlock(nn.Module):
         self.conv = nn.Conv1d(d, d, kernel_size=self.kernel, groups=d, bias=False)
         self.out_proj = TernaryLinear(d, d, cfg.ternary)
         self.ffn_norm = RMSNorm(d, cfg.norm_eps)
-        self.ffn = SwiGLU(d, cfg.ffn_hidden, cfg.ternary)
+        self.ffn = SwiGLU(d, cfg.ffn_hidden, cfg.ternary, fused=True)
         nn.init.kaiming_uniform_(self.conv.weight, a=math.sqrt(5))
 
     def forward(self, x, cos=None, sin=None, cache=None, use_cache=False):
