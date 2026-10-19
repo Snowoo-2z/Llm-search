@@ -1,0 +1,22 @@
+{
+  "name": "blackcode_fr_260m_128k",
+  "description": "Extension experimentale du modele francais dense ~258,6 M parametres. Contexte cible 131072 via YaRN apres preentrainement court-contexte; aucune qualite a 128k n'est encore validee.",
+  "vocab_size": 24576,
+  "max_seq_len": 131072,
+  "d_model": 1024,
+  "n_layers": 20,
+  "n_heads": 16,
+  "n_kv_heads": 4,
+  "head_dim": 64,
+  "ffn_hidden": 2816,
+  "conv_kernel": 4,
+  "attn_every": 4,
+  "tie_embeddings": true,
+  "loop": 1,
+  "ternary": false,
+  "rope_scaling": "yarn",
+  "rope_original_max_seq_len": 16384,
+  "rope_factor": 8.0,
+  "rope_beta_fast": 32.0,
+  "rope_beta_slow": 1.0
+}
