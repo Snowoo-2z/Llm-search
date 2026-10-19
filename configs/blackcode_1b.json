@@ -1,0 +1,17 @@
+{
+  "name": "blackcode_1b",
+  "description": "Cible de déploiement : 1,19 Md paramètres, poids ternaires, contexte 8k, < 1 Go de RAM. À obtenir par distillation + ternarisation, pas par pré-entraînement from scratch sur T4.",
+  "vocab_size": 32768,
+  "max_seq_len": 8192,
+  "d_model": 2048,
+  "n_layers": 24,
+  "n_heads": 16,
+  "n_kv_heads": 4,
+  "head_dim": 128,
+  "ffn_hidden": 5632,
+  "conv_kernel": 4,
+  "attn_every": 4,
+  "tie_embeddings": true,
+  "loop": 1,
+  "ternary": true
+}
