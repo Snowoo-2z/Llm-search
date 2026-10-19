@@ -1,0 +1,18 @@
+{
+  "name": "blackcode_fr_260m",
+  "description": "Modele dense d'environ 258,6 M de parametres, initialise aleatoirement et preentraine de zero. Dialogues et prose d'entrainement en francais uniquement; les extraits de code conservent leur syntaxe. Vocabulaire BPE francais a entrainer sur le corpus retenu.",
+  "vocab_size": 24576,
+  "max_seq_len": 8192,
+  "d_model": 1024,
+  "n_layers": 20,
+  "n_heads": 16,
+  "n_kv_heads": 4,
+  "head_dim": 64,
+  "ffn_hidden": 2816,
+  "conv_kernel": 4,
+  "attn_every": 4,
+  "tie_embeddings": true,
+  "loop": 1,
+  "ternary": false,
+  "rope_scaling": "none"
+}
