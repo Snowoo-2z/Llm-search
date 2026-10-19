@@ -1,0 +1,2 @@
+{"task_id": "toy/1", "prompt": "def add(a, b):\n", "test": "def check(candidate):\n    assert candidate(1, 2) == 3\n    assert candidate(-1, 1) == 0\n", "entry_point": "add"}
+{"task_id": "toy/2", "prompt": "def square(x):\n", "test": "def check(candidate):\n    assert candidate(3) == 9\n    assert candidate(0) == 0\n", "entry_point": "square"}

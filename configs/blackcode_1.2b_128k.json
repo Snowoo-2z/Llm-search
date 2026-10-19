@@ -1,0 +1,22 @@
+{
+  "name": "blackcode_1.2b_128k_experimental",
+  "description": "Cible de recherche : 1,22 Md paramètres, contexte 131072 tokens, minimum 4 Go de RAM système en inférence. Architecture conservée (18 convolutions + 6 GQA); YaRN est implémenté côté PyTorch et runtime C, mais la qualité long-contexte, la mémoire à 128k et l'entraînement restent à valider.",
+  "vocab_size": 49152,
+  "max_seq_len": 131072,
+  "d_model": 2048,
+  "n_layers": 24,
+  "n_heads": 16,
+  "n_kv_heads": 4,
+  "head_dim": 128,
+  "ffn_hidden": 5632,
+  "conv_kernel": 4,
+  "attn_every": 4,
+  "tie_embeddings": true,
+  "loop": 1,
+  "ternary": true,
+  "rope_scaling": "yarn",
+  "rope_original_max_seq_len": 16384,
+  "rope_factor": 8.0,
+  "rope_beta_fast": 32.0,
+  "rope_beta_slow": 1.0
+}
